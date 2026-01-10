@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gophercises/quiet_hn/hn"
@@ -57,108 +56,37 @@ func getStories(numStories int) ([]item, error) {
 		return nil, err
 	}
 	var stories []item
-
-	idsChan := make(chan idxID, numStories)
-	cancelChan := make(chan struct{})
-	storiesChan := make(chan result, numStories)
-	continueChan := make(chan struct{})
-
-	go sendIDs(idsChan, ids, cancelChan)
-
-	wg := sync.WaitGroup{}
-
-	go sendStories(idsChan, storiesChan, continueChan, cancelChan, &client, numStories, &wg)
-
-	results := getResults(numStories, storiesChan, continueChan, cancelChan)
-	wg.Wait()
-	close(storiesChan)
-
+	type result struct {
+		idx  int
+		item item
+		err  error
+	}
+	storiesChan := make(chan result)
+	for i := range numStories {
+		go func(idx, id int) {
+			hnItem, err := client.GetItem(id)
+			if err != nil {
+				storiesChan <- result{idx: idx, err: err}
+			}
+			storiesChan <- result{idx: idx, item: parseHNItem(hnItem)}
+		}(i, ids[i])
+	}
+	var results []result
+	for range numStories {
+		results = append(results, <-storiesChan)
+	}
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].idx < results[j].idx
 	})
 	for _, r := range results {
-		stories = append(stories, r.item)
+		if r.err != nil {
+			continue
+		}
+		if isStoryLink(r.item) {
+			stories = append(stories, r.item)
+		}
 	}
 	return stories, nil
-}
-
-type idxID struct {
-	idx, id int
-}
-
-type result struct {
-	idx  int
-	item item
-	err  error
-}
-
-func sendIDs(idsChan chan<- idxID, ids []int, cancelChan <-chan struct{}) {
-	defer close(idsChan)
-	for i, id := range ids {
-		select {
-		case <-cancelChan:
-			fmt.Println("cancelling id sender")
-			return
-		default:
-			idsChan <- idxID{idx: i, id: id}
-		}
-	}
-}
-
-func sendStories(idsChan <-chan idxID,
-	storiesChan chan<- result,
-	continueChan <-chan struct{},
-	cancelChan <-chan struct{},
-	client *hn.Client,
-	numStories int,
-	wg *sync.WaitGroup) {
-	wg.Add(1)
-	defer wg.Done()
-	for {
-		for range numStories {
-			select {
-			case <-cancelChan:
-				fmt.Println("cancelling story fetcher")
-				return
-			default:
-				wg.Go(func() {
-					i, _ := <-idsChan
-					hnItem, err := client.GetItem(i.id)
-					if err != nil {
-						storiesChan <- result{idx: i.idx, err: err}
-					}
-					//			fmt.Println("about to send story")
-					storiesChan <- result{idx: i.idx, item: parseHNItem(hnItem)}
-				})
-			}
-		}
-		//fmt.Println("finished sending batch of 30 stories, waiting for continue")
-		<-continueChan
-		//fmt.Println("Continuing..")
-	}
-}
-
-func getResults(numStories int, storiesChan <-chan result, continueChan chan struct{}, cancelChan chan struct{}) []result {
-	var results []result
-	for {
-		for range numStories {
-			story := <-storiesChan
-			if story.err != nil {
-				continue
-			}
-			if isStoryLink(story.item) {
-				results = append(results, story)
-			}
-			if len(results) >= numStories {
-				close(cancelChan)
-				close(continueChan)
-				return results
-			}
-		}
-		//fmt.Printf("finished reading 30 times, total length: %d. Letting fetching func to continue\n", len(results))
-		continueChan <- struct{}{}
-		//fmt.Printf("Sent continue signal\n")
-	}
 }
 
 func isStoryLink(item item) bool {
