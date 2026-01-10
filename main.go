@@ -32,7 +32,7 @@ func main() {
 func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		stories, err := getStories(numStories)
+		stories, err := getTopStories(numStories)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -49,35 +49,47 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 	})
 }
 
-func getStories(numStories int) ([]item, error) {
+func getTopStories(numStories int) ([]item, error) {
 	var client hn.Client
 	ids, err := client.TopItems()
 	if err != nil {
 		return nil, err
 	}
 	var stories []item
+	var at int
+	for len(stories) < numStories {
+		need := (numStories - len(stories)) + 5/4
+		stories = append(stories, getStories(ids[at:at+need])...)
+		at += need
+	}
+	return stories[:numStories], nil
+}
+
+func getStories(ids []int) []item {
+	var client hn.Client
 	type result struct {
 		idx  int
 		item item
 		err  error
 	}
-	storiesChan := make(chan result)
-	for i := range numStories {
+	resultsChan := make(chan result)
+	for i := 0; i < len(ids); i++ {
 		go func(idx, id int) {
 			hnItem, err := client.GetItem(id)
 			if err != nil {
-				storiesChan <- result{idx: idx, err: err}
+				resultsChan <- result{idx: idx, err: err}
 			}
-			storiesChan <- result{idx: idx, item: parseHNItem(hnItem)}
+			resultsChan <- result{idx: idx, item: parseHNItem(hnItem)}
 		}(i, ids[i])
 	}
 	var results []result
-	for range numStories {
-		results = append(results, <-storiesChan)
+	for i := 0; i < len(ids); i++ {
+		results = append(results, <-resultsChan)
 	}
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].idx < results[j].idx
 	})
+	var stories []item
 	for _, r := range results {
 		if r.err != nil {
 			continue
@@ -86,7 +98,7 @@ func getStories(numStories int) ([]item, error) {
 			stories = append(stories, r.item)
 		}
 	}
-	return stories, nil
+	return stories
 }
 
 func isStoryLink(item item) bool {
