@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,25 +32,10 @@ func main() {
 func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		var client hn.Client
-		ids, err := client.TopItems()
+		stories, err := getStories(numStories)
 		if err != nil {
-			http.Error(w, "Failed to load top stories", http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
-		}
-		var stories []item
-		for _, id := range ids {
-			hnItem, err := client.GetItem(id)
-			if err != nil {
-				continue
-			}
-			item := parseHNItem(hnItem)
-			if isStoryLink(item) {
-				stories = append(stories, item)
-				if len(stories) >= numStories {
-					break
-				}
-			}
 		}
 		data := templateData{
 			Stories: stories,
@@ -61,6 +47,46 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 			return
 		}
 	})
+}
+
+func getStories(numStories int) ([]item, error) {
+	var client hn.Client
+	ids, err := client.TopItems()
+	if err != nil {
+		return nil, err
+	}
+	var stories []item
+	type result struct {
+		idx  int
+		item item
+		err  error
+	}
+	storiesChan := make(chan result)
+	for i := range numStories {
+		go func(idx, id int) {
+			hnItem, err := client.GetItem(id)
+			if err != nil {
+				storiesChan <- result{idx: idx, err: err}
+			}
+			storiesChan <- result{idx: idx, item: parseHNItem(hnItem)}
+		}(i, ids[i])
+	}
+	var results []result
+	for range numStories {
+		results = append(results, <-storiesChan)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].idx < results[j].idx
+	})
+	for _, r := range results {
+		if r.err != nil {
+			continue
+		}
+		if isStoryLink(r.item) {
+			stories = append(stories, r.item)
+		}
+	}
+	return stories, nil
 }
 
 func isStoryLink(item item) bool {
