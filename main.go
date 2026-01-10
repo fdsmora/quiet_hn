@@ -63,6 +63,10 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 	})
 }
 
+func isStoryLink(item item) bool {
+	return item.Type == "story" && item.URL != ""
+}
+
 func parseHNItem(hnItem hn.Item) item {
 	ret := item{Item: hnItem}
 	url, err := url.Parse(ret.URL)
@@ -76,11 +80,6 @@ func parseHNItem(hnItem hn.Item) item {
 type item struct {
 	hn.Item
 	Host string
-}
-
-type itemChan struct {
-	chItem chan item
-	seen   bool
 }
 
 type templateData struct {
