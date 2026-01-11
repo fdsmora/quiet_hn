@@ -11,8 +11,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gophercises/quiet_hn/hn"
+	"github.com/fdsmora/gophercises/quiet_hn/hn"
 )
+
+type (
+	HN interface {
+		TopItems() ([]int, error)
+		GetItem(id int) (hn.Item, error)
+	}
+	handler struct {
+		client HN
+	}
+)
+
+func newHandler(client HN) *handler {
+	return &handler{client: client}
+}
 
 func main() {
 	// parse flags
@@ -23,16 +37,17 @@ func main() {
 
 	tpl := template.Must(template.ParseFiles("./index.gohtml"))
 
-	http.HandleFunc("/", handler(numStories, tpl))
+	handler := newHandler(hn.NewCache(&hn.Client{}))
+	http.HandleFunc("/", handler.getHandler(numStories, tpl))
 
 	// Start the server
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
-func handler(numStories int, tpl *template.Template) http.HandlerFunc {
+func (h *handler) getHandler(numStories int, tpl *template.Template) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		stories, err := getTopStories(numStories)
+		stories, err := h.getTopStories(numStories)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -49,9 +64,8 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 	})
 }
 
-func getTopStories(numStories int) ([]item, error) {
-	var client hn.Client
-	ids, err := client.TopItems()
+func (h *handler) getTopStories(numStories int) ([]item, error) {
+	ids, err := h.client.TopItems()
 	if err != nil {
 		return nil, err
 	}
@@ -59,13 +73,13 @@ func getTopStories(numStories int) ([]item, error) {
 	var at int
 	for len(stories) < numStories {
 		need := (numStories - len(stories)) + 5/4
-		stories = append(stories, getStories(ids[at:at+need])...)
+		stories = append(stories, h.getStories(ids[at:at+need])...)
 		at += need
 	}
 	return stories[:numStories], nil
 }
 
-func getStories(ids []int) []item {
+func (h *handler) getStories(ids []int) []item {
 	var client hn.Client
 	type result struct {
 		idx  int
