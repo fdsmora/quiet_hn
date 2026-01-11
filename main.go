@@ -30,14 +30,15 @@ func newHandler(client HN) *handler {
 
 func main() {
 	// parse flags
-	var port, numStories int
+	var port, numStories, cacheDuration int
 	flag.IntVar(&port, "port", 3000, "the port to start the web server on")
 	flag.IntVar(&numStories, "num_stories", 30, "the number of top stories to display")
+	flag.IntVar(&cacheDuration, "cache_duration", 10, "the cache duration in seconds")
 	flag.Parse()
 
 	tpl := template.Must(template.ParseFiles("./index.gohtml"))
 
-	handler := newHandler(hn.NewCache(&hn.Client{}))
+	handler := newHandler(hn.NewCache(&hn.Client{}, time.Duration(cacheDuration)*time.Second))
 	http.HandleFunc("/", handler.getHandler(numStories, tpl))
 
 	// Start the server
@@ -80,7 +81,6 @@ func (h *handler) getTopStories(numStories int) ([]item, error) {
 }
 
 func (h *handler) getStories(ids []int) []item {
-	var client hn.Client
 	type result struct {
 		idx  int
 		item item
@@ -89,7 +89,7 @@ func (h *handler) getStories(ids []int) []item {
 	resultsChan := make(chan result)
 	for i := 0; i < len(ids); i++ {
 		go func(idx, id int) {
-			hnItem, err := client.GetItem(id)
+			hnItem, err := h.client.GetItem(id)
 			if err != nil {
 				resultsChan <- result{idx: idx, err: err}
 			}
