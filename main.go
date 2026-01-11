@@ -33,12 +33,13 @@ func main() {
 	var port, numStories, cacheDuration int
 	flag.IntVar(&port, "port", 3000, "the port to start the web server on")
 	flag.IntVar(&numStories, "num_stories", 30, "the number of top stories to display")
-	flag.IntVar(&cacheDuration, "cache_duration", 10, "the cache duration in seconds")
+	flag.IntVar(&cacheDuration, "cache_duration", 37, "the cache duration in seconds")
 	flag.Parse()
 
 	tpl := template.Must(template.ParseFiles("./index.gohtml"))
 
-	handler := newHandler(hn.NewCache(&hn.Client{}, time.Duration(cacheDuration)*time.Second))
+	cache := hn.NewCache(&hn.Client{}, time.Duration(cacheDuration)*time.Second)
+	handler := newHandler(cache)
 	http.HandleFunc("/", handler.getHandler(numStories, tpl))
 
 	// Start the server
